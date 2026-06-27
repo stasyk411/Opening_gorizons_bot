@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+ключ.txt
+archive/
+*.log
+bot_data.db
+core/methodology_private.md
+
+bot_backup.py
+*.txt
