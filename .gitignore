@@ -6,6 +6,7 @@ archive/
 *.log
 bot_data.db
 core/methodology_private.md
+core/db_schema_private.py
 
 bot_backup.py
 *.txt

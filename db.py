@@ -1,41 +1,17 @@
+# ВНИМАНИЕ: Схема БД хранится в core/db_schema_private.py (не в репозитории).
+# При локальном запуске импортируется автоматически.
+
 import sqlite3
 import json
 from datetime import datetime
 from typing import Dict, Optional
 
-# ============================================
-# ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ
-# ============================================
-
-DB_PATH = "bot_data.db"
-
-
-def init_db():
-    """Создаёт таблицу users и events, если они не существуют."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            context_json TEXT,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            event_type TEXT NOT NULL,
-            metadata TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(user_id)
-        )
-    """)
-    
-    conn.commit()
-    conn.close()
+try:
+    from core.db_schema_private import init_db, DB_PATH
+except ImportError:
+    def init_db():
+        raise RuntimeError("db_schema_private.py не найден. Бот не может работать без схемы БД.")
+    DB_PATH = "bot_data.db"
 
 
 # ============================================

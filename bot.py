@@ -32,6 +32,7 @@ if not OPENROUTER_API_KEY:
     sys.exit(1)
 TEST_API_KEY = env.get("TEST_API_KEY")
 OWNER_ID = int(env.get("OWNER_ID", "0"))
+MODEL_NAME = env.get("MODEL_NAME", "qwen/qwen3-max")
 
 # Проверка наличия критических файлов
 required_files = [
@@ -107,23 +108,18 @@ CRISIS_RESPONSE_PANIC = """🛑 СТОП. Это паническая атака
 def check_safety(user_message: str) -> str | None:
     message_lower = user_message.lower()
     
-    # Комбинаторная проверка физической угрозы
     has_isolated = any(marker in message_lower for marker in ISOLATED_PLACE_MARKERS)
     has_substance = any(marker in message_lower for marker in SUBSTANCE_MARKERS)
     has_coercion = any(marker in message_lower for marker in COERCION_MARKERS)
 
     threat_flags = sum([has_isolated, has_substance, has_coercion])
     if threat_flags >= 2:
-        # Активировать Safety Layer / протокол физической безопасности
-        # Вставить сюда вызов существующей логики safety-ответа
         return CRISIS_RESPONSE_PHYSICAL_THREAT
     
-    # Проверка суицида (приоритет 1)
     for marker in SUICIDE_MARKERS:
         if marker in message_lower:
             return CRISIS_RESPONSE_SUICIDE
     
-    # Проверка паники (приоритет 2)
     for marker in PANIC_MARKERS:
         if marker in message_lower:
             return CRISIS_RESPONSE_PANIC
@@ -139,7 +135,6 @@ def load_system_prompt():
         with open(os.path.join("core", "system_prompt_core.md"), "r", encoding="utf-8") as f:
             core_prompt = f.read()
         
-        # Загружаем методологическое ядро если файл существует
         methodology_path = os.path.join("core", "methodology_private.md")
         if os.path.exists(methodology_path):
             with open(methodology_path, "r", encoding="utf-8") as f:
@@ -152,7 +147,6 @@ def load_system_prompt():
 
 def load_module(module_name):
     try:
-        # Защита от path traversal: разрешаем только модули из папки modules/
         if not module_name.startswith("module_") or ".." in module_name or "/" in module_name or "\\" in module_name:
             return ""
         with open(os.path.join("modules", f"{module_name}.md"), "r", encoding="utf-8") as f:
@@ -233,12 +227,7 @@ def get_api_client(user_id: int) -> openai.OpenAI:
     else:
         return openai.OpenAI(api_key=OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1")
 
-client = openai.OpenAI(
-    api_key=OPENROUTER_API_KEY,
-    base_url="https://openrouter.ai/api/v1"
-)
-
-# Хранилище контекста (в памяти, для продакшена нужна БД)
+# Хранилище контекста
 user_contexts = {}
 processed_messages = set()
 
@@ -297,22 +286,20 @@ def handle_message(message):
     user_id = message.chat.id
     user_text = message.text
     
-    # Ограничение длины сообщения (защита от DoS)
+    
+    
     if not user_text or len(user_text) > 5000:
         bot.send_message(user_id, "Сообщение слишком длинное. Пожалуйста, сократи его.")
         return
     
-    # Защита от дублирования сообщений
     message_id = message.message_id
     if message_id in processed_messages:
         return
     processed_messages.add(message_id)
     
-    # Ограничение размера множества (защита от утечки памяти)
     if len(processed_messages) > 1000:
         processed_messages.clear()
     
-    # Получение контекста пользователя
     context = UserRepository.get_context(user_id)
     if not context:
         context = {
@@ -322,10 +309,8 @@ def handle_message(message):
         }
         UserRepository.save_context(user_id, context)
     
-    # ПРОВЕРКА МАРКЕРОВ ДЛЯ АКТИВАЦИИ МОДУЛЕЙ (приоритет 0)
     user_text_lower = user_text.lower()
     
-    # Приоритет: структурная зависимость (проверяется ДО Safety Layer)
     structural_marker_found = None
     if "module_structural_dependency" not in context["modules_loaded"]:
         for marker in STRUCTURAL_MARKERS:
@@ -342,7 +327,7 @@ def handle_message(message):
             })
             context["modules_loaded"].append("module_structural_dependency")
             UserRepository.log_event(user_id, "module_loaded", {"module": "module_structural_dependency"})
-        # Добавляем сообщение пользователя и отправляем в LLM
+        
         context["messages"].append({"role": "user", "content": user_text})
         if len(context["messages"]) > 50:
             context["messages"] = context["messages"][-25:]
@@ -352,7 +337,7 @@ def handle_message(message):
         
         try:
             response = api_client.chat.completions.create(
-                model="qwen/qwen3-max",
+                model=MODEL_NAME,
                 messages=context["messages"],
                 temperature=0.7,
                 max_tokens=1500
@@ -365,13 +350,11 @@ def handle_message(message):
             bot.send_message(user_id, f"Ошибка: {e}")
         return
     
-    # SAFETY LAYER (приоритет 1)
     safety_response = check_safety(user_text)
     if safety_response:
         bot.send_message(user_id, safety_response)
         return
     
-    # ПРОВЕРКА ОСТАЛЬНЫХ МОДУЛЕЙ (приоритет 2)
     activated_module = None
     for module_name, markers in MODULE_MARKERS.items():
         if module_name not in context["modules_loaded"]:
@@ -393,10 +376,8 @@ def handle_message(message):
             context["modules_loaded"].append(module_name)
             UserRepository.log_event(user_id, "module_loaded", {"module": module_name})
     
-    # Добавление сообщения пользователя
     context["messages"].append({"role": "user", "content": user_text})
     
-    # Ограничение размера контекста (защита от переполнения памяти)
     if len(context["messages"]) > 50:
         context["messages"] = context["messages"][-25:]
     
@@ -404,25 +385,22 @@ def handle_message(message):
     api_key_type = "owner" if user_id == OWNER_ID else "tester"
     
     UserRepository.log_event(user_id, "message_sent", {"length": len(message.text), "api_key_type": api_key_type})
-    # Запрос к LLM
+    
     try:
         response = api_client.chat.completions.create(
-            model="qwen/qwen3-max",
+            model=MODEL_NAME,
             messages=context["messages"],
             temperature=0.7,
             max_tokens=1500
         )
         bot_reply = response.choices[0].message.content
         
-        # Добавление ответа бота в контекст
         context["messages"].append({"role": "assistant", "content": bot_reply})
         
         if not any(m in context["modules_loaded"] for m in ["module_karpman", "module_structural_dependency", "module_void", "module_abuse", "module_crisis_phrases", "module_manipulations", "module_tit_for_tat", "module_archetypes", "module_gambling", "module_paralysis"]):
             UserRepository.log_event(user_id, "base_response", {"trigger": "no_module_matched"})
         
         UserRepository.save_context(user_id, context)
-        
-        # Отправка ответа пользователю
         bot.send_message(user_id, bot_reply)
         
     except Exception as e:
