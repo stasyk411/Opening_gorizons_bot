@@ -4,6 +4,7 @@ import os
 import sys
 from datetime import datetime
 from db import UserRepository
+from core.scene_router import classify_scene, AVAILABLE_SCENES
 
 # Загрузка переменных из .env
 def load_env():
@@ -155,50 +156,8 @@ def load_module(module_name):
         return ""
 
 # ============================================
-# ТАБЛИЦА АКТИВАЦИИ МОДУЛЕЙ
+# СТРУКТУРНЫЕ МАРКЕРЫ (оставлены как fallback)
 # ============================================
-
-MODULE_MARKERS = {
-    "module_karpman": [
-        "унижает но чувствую", "терплю потому что нужна", "нужной когда терплю", "унижает но я нужна",
-        "он меня унижает", "токсичные отношения", "манипулирует",
-        "жертва", "спасает", "преследует", "карпман"
-    ],
-    "module_manipulations": [
-        "он меня использует", "я не могу отказать", "чувствую вину",
-        "меня вынуждают", "манипулирует", "песок", "глина", "скала", "гранит", "алмаз"
-    ],
-    "module_tit_for_tat": [
-        "месть", "эскалация", "он начал первым", "я не могу просто так оставить",
-        "справедливость", "возврат долга", "око за око"
-    ],
-    "module_archetypes": [
-        "герой", "жертва", "мудрец", "творец", "перфекционист",
-        "какую позицию", "какую роль"
-    ],
-    "module_gambling": [
-        "проиграл", "отыграюсь", "ставки", "казино", "не могу остановиться",
-        "банкролл", "долги из-за азартных игр", "лудомания"
-    ],
-    "module_abuse": [
-        "бьёт", "унижает", "контролирует", "боюсь уйти", "заслужил",
-        "насилие", "токсичные отношения", "газлайтинг"
-    ],
-    "module_void": [
-        "чувствую пустоту", "внутри пусто", "ничего не чувствую",
-        "пустота внутри", "ощущение пустоты", "выдерживаю пустоту",
-        "спокойная пустота", "тяжёлая пустота"
-    ],
-    "module_paralysis": [
-        "не могу встать", "нет сил", "всё бессмысленно", "зачем вообще",
-        "апатия", "выгорание", "депрессия", "не вижу смысла"
-    ],
-    "module_crisis_phrases": [
-        "мне пизда", "всё пропало", "я в жопе", "полный пиздец",
-        "я не знаю, что делать", "всё рушится", "мне херово",
-        "я на дне", "всё плохо", "мне конец"
-    ]
-}
 
 STRUCTURAL_MARKERS = [
     "единственный доход", "держит деньгами", "не могу уйти финансово",
@@ -286,8 +245,6 @@ def handle_message(message):
     user_id = message.chat.id
     user_text = message.text
     
-    
-    
     if not user_text or len(user_text) > 5000:
         bot.send_message(user_id, "Сообщение слишком длинное. Пожалуйста, сократи его.")
         return
@@ -311,12 +268,19 @@ def handle_message(message):
     
     user_text_lower = user_text.lower()
     
+    # === STRUCTURAL DEPENDENCY FALLBACK ===
     structural_marker_found = None
     if "module_structural_dependency" not in context["modules_loaded"]:
         for marker in STRUCTURAL_MARKERS:
             if marker in user_text_lower:
                 structural_marker_found = marker
                 break
+
+    # === SAFETY CHECK ===
+    safety_response = check_safety(user_text)
+    
+    # === DIAGNOSTICS ===
+    print(f"[DEBUG] text='{user_text[:40]}' | safety={bool(safety_response)} | structural={structural_marker_found}")
 
     if structural_marker_found:
         module_content = load_module("module_structural_dependency")
@@ -333,7 +297,6 @@ def handle_message(message):
             context["messages"] = context["messages"][-25:]
         
         api_client = get_api_client(user_id)
-        api_key_type = "owner" if user_id == OWNER_ID else "tester"
         
         try:
             response = api_client.chat.completions.create(
@@ -350,31 +313,28 @@ def handle_message(message):
             bot.send_message(user_id, f"Ошибка: {e}")
         return
     
-    safety_response = check_safety(user_text)
     if safety_response:
         bot.send_message(user_id, safety_response)
         return
     
-    activated_module = None
-    for module_name, markers in MODULE_MARKERS.items():
-        if module_name not in context["modules_loaded"]:
-            for marker in markers:
-                if marker in user_text_lower:
-                    activated_module = (module_name, marker)
-                    break
-        if activated_module:
-            break
-
-    if activated_module:
-        module_name, marker = activated_module
-        module_content = load_module(module_name)
-        if module_content:
+    # === СЕМАНТИЧЕСКАЯ КЛАССИФИКАЦИЯ СЦЕНЫ ===
+    scene_result = classify_scene(user_text)
+    print(f"[SCENE DEBUG] → {scene_result}")
+    scene_id = scene_result.get("scene_id", "unknown")
+    confidence = scene_result.get("confidence", 0.0)
+    
+    if scene_id != "unknown" and confidence >= 0.7:
+        scene_path = os.path.join("core", f"{scene_id}.md")
+        if os.path.exists(scene_path):
+            with open(scene_path, "r", encoding="utf-8") as f:
+                scene_content = f.read()
             context["messages"].append({
                 "role": "system",
-                "content": f"\n\n[АКТИВИРОВАН МОДУЛЬ: {module_name}]\n{module_content}"
+                "content": f"\n\n[АКТИВИРОВАНА СЦЕНА: {scene_id}]\n{scene_content}"
             })
-            context["modules_loaded"].append(module_name)
-            UserRepository.log_event(user_id, "module_loaded", {"module": module_name})
+            if scene_id not in context.get("modules_loaded", []):
+                context.setdefault("modules_loaded", []).append(scene_id)
+            UserRepository.log_event(user_id, "scene_activated", {"scene": scene_id, "confidence": confidence})
     
     context["messages"].append({"role": "user", "content": user_text})
     
@@ -384,7 +344,7 @@ def handle_message(message):
     api_client = get_api_client(user_id)
     api_key_type = "owner" if user_id == OWNER_ID else "tester"
     
-    UserRepository.log_event(user_id, "message_sent", {"length": len(message.text), "api_key_type": api_key_type})
+    UserRepository.log_event(user_id, "message_sent", {"length": len(user_text), "api_key_type": api_key_type})
     
     try:
         response = api_client.chat.completions.create(
@@ -397,8 +357,8 @@ def handle_message(message):
         
         context["messages"].append({"role": "assistant", "content": bot_reply})
         
-        if not any(m in context["modules_loaded"] for m in ["module_karpman", "module_structural_dependency", "module_void", "module_abuse", "module_crisis_phrases", "module_manipulations", "module_tit_for_tat", "module_archetypes", "module_gambling", "module_paralysis"]):
-            UserRepository.log_event(user_id, "base_response", {"trigger": "no_module_matched"})
+        if scene_id == "unknown":
+            UserRepository.log_event(user_id, "base_response", {"trigger": "no_scene_matched"})
         
         UserRepository.save_context(user_id, context)
         bot.send_message(user_id, bot_reply)
@@ -414,3 +374,4 @@ if __name__ == "__main__":
     print("Бот запущен...")
     print("Нажми Ctrl+C для остановки")
     bot.polling(none_stop=True)
+    
