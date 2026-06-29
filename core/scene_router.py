@@ -8,23 +8,22 @@ import openai
 import os
 import json
 
-# Загружаем переменные
-def _get_env():
-    env_vars = {}
+# Загружаем ТОЛЬКО API-ключ из .env
+def _get_api_key():
     try:
         with open(".env", "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip()
+                    if key.strip() == "OPENROUTER_API_KEY":
+                        return value.strip().strip('"').strip("'")
     except FileNotFoundError:
         pass
-    return env_vars
+    return None
 
-_env = _get_env()
-_API_KEY = _env.get("OPENROUTER_API_KEY") or _env.get("TEST_API_KEY")
-_MODEL = _env.get("MODEL_NAME", "qwen/qwen3-max")
+_API_KEY = _get_api_key() or os.environ.get("TEST_API_KEY")
+_MODEL = "qwen/qwen3-max"  # ЖЁСТКИЙ ХАРДКОД. Никаких переменных среды.
 
 # Список доступных сцен (MVP + новая онтология операций)
 AVAILABLE_SCENES = {
@@ -34,6 +33,8 @@ AVAILABLE_SCENES = {
     "scene_04_dual_choice": "Человек видит только два выхода (оба плохих), не замечает промежуточных вариантов",
     "scene_feeling_equals_fact": "Операция 'Отделить эмоцию от события'. Человек склеивает чувство и реальность ('мне страшно = опасно', 'чувствую вину = виноват'). Нужен вопрос-разделитель.",
     "scene_fact_equals_conclusion": "Операция 'Отделить факт от вывода'. Человек склеивает событие и свою интерпретацию ('он молчит = ненавидит', 'не ответила = безразличен'). Нужен вопрос-разделитель.",
+    "scene_thought_equals_reality": "Операция 'Отделить мысль от реальности'. Человек считает свою гипотезу фактом ('мне кажется = так и есть'). Нужен вопрос-проверка.",
+    "scene_should_equals_want": "Операция 'Отделить внешнее требование от внутреннего желания'. Человек склеивает долг и хотение ('я должен = я хочу', 'надо терпеть'). Нужен вопрос-разделитель.",
     "scene_06_fear_of_loss": "Человек боится потерять отношения и поэтому терпит/молчит/угождает",
     "scene_07_overload": "Состояние перегрузки: туман в голове, трясёт, не могу думать, слишком много всего, голова пустая или гудит. Человек не способен анализировать, нуждается в сенсорном заземлении.",
     "unknown": "Сцена не распознана — нужен уточняющий вопрос"
@@ -106,6 +107,8 @@ if __name__ == "__main__":
         "Я чувствую себя бесполезным значит так и есть",
         "Мне страшно, значит что-то плохое точно случится",  # feeling_equals_fact
         "Он молчит, значит он меня ненавидит",  # fact_equals_conclusion
+        "Мне кажется, что всё плохо — значит так и есть",  # thought_equals_reality
+        "Я должен быть сильным, нельзя показывать слабость",  # should_equals_want
     ]
     
     print("=" * 60)
