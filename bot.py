@@ -280,7 +280,6 @@ def handle_message(message):
     safety_response = check_safety(user_text)
     
     # === DIAGNOSTICS ===
-    print(f"[DEBUG] text='{user_text[:40]}' | safety={bool(safety_response)} | structural={structural_marker_found}")
 
     if structural_marker_found:
         module_content = load_module("module_structural_dependency")
