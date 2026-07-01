@@ -52,13 +52,12 @@ for f in REQUIRED_FILES:
 print("✅ Все файлы загружены успешно")
 
 # ============================================
-# ANONYMOUS RESEARCH LOG (Приватность!)
+# ANONYMOUS RESEARCH LOG
 # ============================================
 
 ANON_LOG_PATH = os.path.join(os.path.dirname(__file__), "research_first_messages.log")
 
 def log_anonymous_first_message(category: str, text: str):
-    """Логирует первое сообщение пользователя БЕЗ user_id для исследования."""
     timestamp = datetime.now().isoformat()
     safe_text = text[:500].replace("\n", " ")
     line = f"{timestamp}\t{category}\t{safe_text}\n"
@@ -69,7 +68,7 @@ def log_anonymous_first_message(category: str, text: str):
         print(f"[RESEARCH LOG ERROR] {e}")
 
 # ============================================
-# SAFETY LAYER
+# SAFETY LAYER (ИСПРАВЛЕННЫЙ ДЛЯ ГИПОТЕЗЫ №6)
 # ============================================
 
 SUICIDE_MARKERS = [
@@ -106,6 +105,11 @@ CRISIS_RESPONSE_PANIC = """🛑 СТОП. Это паническая атака
 Это не инфаркт. Это адреналин. Ты в безопасности."""
 
 def check_safety(text: str) -> str | None:
+    """
+    Проверяет ТОЛЬКО явные текстовые маркеры угрозы.
+    НЕ реагирует на выбор EP, слово 'тревога' в обычном контексте
+    или отсутствие острых симптомов.
+    """
     t = text.lower()
     for m in SUICIDE_MARKERS:
         if m in t:
@@ -113,6 +117,7 @@ def check_safety(text: str) -> str | None:
     for m in PANIC_MARKERS:
         if m in t:
             return CRISIS_RESPONSE_PANIC
+    # Если маркеров нет — возвращаем None, даже если EP="тревожно"
     return None
 
 # ============================================
@@ -190,7 +195,6 @@ def send_main_menu(message):
         "first_message_logged": False
     }
     UserRepository.save_context(user_id, context)
-    # Объективное событие воронки
     UserRepository.log_funnel_event(user_id, "session_start")
     
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -225,7 +229,7 @@ def handle_callback(call):
         "first_message_logged": False
     }
     
-    # 1. ЭКСТРЕННЫЙ ВХОД
+    # 1. ЭКСТРЕННЫЙ ВХОД (только по кнопке!)
     if data == "ep_crisis":
         bot.answer_callback_query(call.id)
         bot.send_message(user_id, CRISIS_RESPONSE_PANIC)
@@ -287,7 +291,7 @@ def handle_callback(call):
         return
 
 # ============================================
-# MAIN MESSAGE HANDLER (V1 Clean Analytics)
+# MAIN MESSAGE HANDLER (V1 Clean Analytics + Fix #6)
 # ============================================
 
 @bot.message_handler(func=lambda m: True)
@@ -305,10 +309,11 @@ def handle_message(message):
     if len(processed_messages) > 1000:
         processed_messages.clear()
     
-    # SAFETY CHECK
+    # SAFETY CHECK: Строго по маркерам, без учёта EP
     safety = check_safety(text)
     if safety:
         bot.send_message(user_id, safety)
+        UserRepository.log_funnel_event(user_id, "safety_triggered", {"trigger": "explicit_marker"})
         return
     
     context = UserRepository.get_context(user_id)
@@ -322,19 +327,15 @@ def handle_message(message):
     
     # === ИССЛЕДОВАТЕЛЬСКАЯ ЛОГИКА: Первое сообщение после EP ===
     if awaiting_story and current_ep and not first_msg_logged and current_ep != "crisis":
-        # 1. Анонимный лог первого предложения (для entry_points.md)
         log_anonymous_first_message(current_ep, text)
         
-        # 2. Объективное событие воронки
         UserRepository.log_funnel_event(user_id, "first_message_sent", {
             "ep": current_ep,
             "length": len(text)
         })
         
-        # 3. Помечаем, что первое сообщение уже залогировано
         context["first_message_logged"] = True
         
-        # 4. Классификация с контекстом
         combined_input = f"[Контекст: {current_ep}]\n{text}"
         scene_result = classify_scene(combined_input)
         print(f"[SCENE DEBUG V1] EP={current_ep} → {scene_result}")
@@ -346,7 +347,7 @@ def handle_message(message):
     scene_id = scene_result.get("scene_id", "unknown")
     confidence = scene_result.get("confidence", 0.0)
     
-    # === ГИПОТЕЗА LLM (вероятностные данные) ===
+    # === ГИПОТЕЗА LLM ===
     if scene_id != "unknown":
         UserRepository.log_llm_hypothesis(
             user_id=user_id,
@@ -356,7 +357,6 @@ def handle_message(message):
             context_ep=current_ep
         )
         
-        # Активация сцены в контексте диалога
         if confidence >= 0.7:
             scene_path = os.path.join("core", f"{scene_id}.md")
             if os.path.exists(scene_path):
@@ -386,7 +386,7 @@ def handle_message(message):
         UserRepository.save_context(user_id, context)
         bot.send_message(user_id, reply)
         
-        # === ВОРОНКА: Проверка микрошага (объективный факт) ===
+        # === ВОРОНКА: Микрошаг ===
         if scene_id != "unknown" and confidence >= 0.7:
             microstep_markers = ["микрошаг", "следующий шаг", "попробуй", "сделай", "выбери одно"]
             if any(m in reply.lower() for m in microstep_markers):
@@ -403,7 +403,7 @@ def handle_message(message):
 # ============================================
 
 if __name__ == "__main__":
-    print("🤖 Бот запущен (V1 Clean Analytics)")
+    print("🤖 Бот запущен (V1 Clean Analytics + Safety Fix #6)")
     print(f"📊 Анонимные первые сообщения → {ANON_LOG_PATH}")
     print("Нажми Ctrl+C для остановки")
     bot.polling(none_stop=True)
