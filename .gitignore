@@ -10,3 +10,4 @@ core/db_schema_private.py
 
 bot_backup.py
 *.txt
+research_first_messages.log
